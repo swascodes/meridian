@@ -1,0 +1,55 @@
+# Dev overrides: hot-reload via volume mounts
+services:
+  api:
+    volumes:
+      - ./services/api:/app/services/api
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --reload --reload-dir /app/services/api
+
+  graph-engine:
+    volumes:
+      - ./services/graph-engine:/app/services/graph-engine
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8001 --reload --reload-dir /app/services/graph-engine
+
+  route-optimizer:
+    volumes:
+      - ./services/route-optimizer:/app/services/route-optimizer
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8002 --reload --reload-dir /app/services/route-optimizer
+
+  quality-oracle:
+    volumes:
+      - ./services/quality-oracle:/app/services/quality-oracle
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8003 --reload --reload-dir /app/services/quality-oracle
+
+  predictive-engine:
+    volumes:
+      - ./services/predictive-engine:/app/services/predictive-engine
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8004 --reload --reload-dir /app/services/predictive-engine
+
+  ingestion:
+    volumes:
+      - ./services/ingestion:/app/services/ingestion
+      - ./packages/shared:/app/packages/shared
+    environment:
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8005 --reload --reload-dir /app/services/ingestion

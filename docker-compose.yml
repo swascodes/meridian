@@ -1,0 +1,179 @@
+services:
+  # ─── Data Layer ───
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: meridian-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meridian}
+      POSTGRES_USER: ${POSTGRES_USER:-meridian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meridian_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-meridian}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meridian
+
+  redis:
+    image: redis:7-alpine
+    container_name: meridian-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - meridian
+
+  # ─── Services ───
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: meridian-api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      graph-engine:
+        condition: service_healthy
+      route-optimizer:
+        condition: service_healthy
+      quality-oracle:
+        condition: service_healthy
+    networks:
+      - meridian
+    restart: unless-stopped
+
+  graph-engine:
+    build:
+      context: .
+      dockerfile: services/graph-engine/Dockerfile
+    container_name: meridian-graph-engine
+    ports:
+      - "${GRAPH_ENGINE_PORT:-8001}:8001"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://graph-engine:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - meridian
+    restart: unless-stopped
+
+  route-optimizer:
+    build:
+      context: .
+      dockerfile: services/route-optimizer/Dockerfile
+    container_name: meridian-route-optimizer
+    ports:
+      - "${ROUTE_OPTIMIZER_PORT:-8002}:8002"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://route-optimizer:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - meridian
+    restart: unless-stopped
+
+  quality-oracle:
+    build:
+      context: .
+      dockerfile: services/quality-oracle/Dockerfile
+    container_name: meridian-quality-oracle
+    ports:
+      - "${QUALITY_ORACLE_PORT:-8003}:8003"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://quality-oracle:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - meridian
+    restart: unless-stopped
+
+  predictive-engine:
+    build:
+      context: .
+      dockerfile: services/predictive-engine/Dockerfile
+    container_name: meridian-predictive-engine
+    ports:
+      - "${PREDICTIVE_ENGINE_PORT:-8004}:8004"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://predictive-engine:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - meridian
+    restart: unless-stopped
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    container_name: meridian-ingestion
+    ports:
+      - "${INGESTION_PORT:-8005}:8005"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://ingestion:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - meridian
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  meridian:
+    driver: bridge
