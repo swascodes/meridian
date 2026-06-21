@@ -22,6 +22,11 @@ class OrderbookPoller:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._running = True
+        
+        # State tracking
+        self.pairs_scanned = 0
+        self.orderbooks_persisted = 0
+        self.last_sync_time = None
 
     async def run(self) -> None:
         """Main polling loop."""
@@ -37,15 +42,24 @@ class OrderbookPoller:
                 await asyncio.sleep(10)
 
     async def _poll_orderbooks(self) -> None:
-        """Poll orderbooks for all known high-volume pairs."""
+        """Poll orderbooks for all known high-volume pairs or top testnet assets."""
         async with get_session() as session:
-            # Get top assets by volume
-            stmt = (
-                select(Asset)
-                .where(Asset.total_volume_24h > 0)
-                .order_by(Asset.total_volume_24h.desc())
-                .limit(50)
-            )
+            # Get top assets
+            if self.settings.stellar_network.lower() == "testnet":
+                # Testnet assets have 0 volume, use trustlines instead
+                stmt = (
+                    select(Asset)
+                    .order_by(Asset.total_trustlines.desc())
+                    .limit(50)
+                )
+            else:
+                stmt = (
+                    select(Asset)
+                    .where(Asset.total_volume_24h > 0)
+                    .order_by(Asset.total_volume_24h.desc())
+                    .limit(50)
+                )
+                
             result = await session.execute(stmt)
             assets = result.scalars().all()
 
@@ -61,32 +75,36 @@ class OrderbookPoller:
         tasks = []
         for asset in assets:
             if asset.id != xlm.id:
+                self.pairs_scanned += 1
                 tasks.append(self._fetch_and_store_orderbook(xlm, asset))
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             success_count = sum(1 for r in results if not isinstance(r, Exception))
+            self.orderbooks_persisted += success_count
+            self.last_sync_time = datetime.now(timezone.utc)
             logger.info("orderbooks_polled", total=len(tasks), success=success_count)
 
     async def _fetch_and_store_orderbook(self, base: Asset, counter: Asset) -> None:
         """Fetch a single orderbook from Horizon and store snapshot."""
         server = get_horizon_client()
+        from stellar_sdk.asset import Asset as StellarAsset
 
         try:
             # Build asset representations for the SDK
             if base.issuer is None:
-                selling_asset = {"asset_type": "native"}
+                selling_asset = StellarAsset.native()
             else:
-                selling_asset = {"asset_code": base.code, "asset_issuer": base.issuer}
+                selling_asset = StellarAsset(base.code, base.issuer)
 
             if counter.issuer is None:
-                buying_asset = {"asset_type": "native"}
+                buying_asset = StellarAsset.native()
             else:
-                buying_asset = {"asset_code": counter.code, "asset_issuer": counter.issuer}
+                buying_asset = StellarAsset(counter.code, counter.issuer)
 
             response = server.orderbook(
-                selling=selling_asset,  # type: ignore[arg-type]
-                buying=buying_asset,  # type: ignore[arg-type]
+                selling=selling_asset,
+                buying=buying_asset,
             ).limit(self.settings.ingestion_max_orderbook_depth).call()
 
             bids = [{"price": float(b["price"]), "amount": float(b["amount"])} for b in response.get("bids", [])]
@@ -124,4 +142,5 @@ class OrderbookPoller:
             await redis.publish(RedisKeys.CHANNEL_ORDERBOOK, f"{base.code}:{counter.code}")
 
         except Exception as e:
-            logger.warning("orderbook_fetch_error", base=base.code, counter=counter.code, error=str(e))
+            import traceback
+            logger.warning("orderbook_fetch_error", base=base.code, counter=counter.code, error=str(e), tb=traceback.format_exc())

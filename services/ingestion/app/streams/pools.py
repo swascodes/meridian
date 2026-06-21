@@ -22,6 +22,12 @@ class PoolSyncStream:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._running = True
+        
+        # State tracking
+        self.total_pools_seen = 0
+        self.total_pools_persisted = 0
+        self.last_sync_time = None
+        self._cursor = "0"
 
     async def run(self) -> None:
         """Main sync loop."""
@@ -37,66 +43,114 @@ class PoolSyncStream:
                 await asyncio.sleep(15)
 
     async def _sync_pools(self) -> None:
-        """Fetch and sync all liquidity pools."""
+        """Fetch and sync all liquidity pools via pagination."""
         server = get_horizon_client()
 
         try:
-            response = server.liquidity_pools().limit(200).call()
-            records = response.get("_embedded", {}).get("records", [])
+            pages_processed = 0
+            pools_discovered = 0
+            pools_skipped = 0
+            total_created = 0
+            total_updated = 0
+            
+            # Start pagination
+            logger.info("pool_sync_starting", cursor=self._cursor)
+            call_builder = server.liquidity_pools().limit(200).cursor(self._cursor)
 
-            updated = 0
-            created = 0
-
-            async with get_session() as session:
-                for record in records:
-                    pool_id = record["id"]
-                    reserves = record.get("reserves", [])
-                    if len(reserves) != 2:
+            while True:
+                try:
+                    response = call_builder.call()
+                except Exception as api_err:
+                    if "429" in str(api_err):
+                        logger.warning("pool_sync_rate_limited", sleeping=5)
+                        await asyncio.sleep(5)
                         continue
+                    raise
+                    
+                records = response.get("_embedded", {}).get("records", [])
+                if not records:
+                    break
 
-                    # Resolve assets
-                    asset_a = await self._resolve_pool_asset(session, reserves[0].get("asset", "native"))
-                    asset_b = await self._resolve_pool_asset(session, reserves[1].get("asset", "native"))
+                pages_processed += 1
+                pools_discovered += len(records)
+                
+                updated = 0
+                created = 0
 
-                    if not asset_a or not asset_b:
-                        continue
+                async with get_session() as session:
+                    for record in records:
+                        pool_id = record["id"]
+                        self._cursor = record.get("paging_token", self._cursor)
+                        
+                        reserves = record.get("reserves", [])
+                        if len(reserves) != 2:
+                            pools_skipped += 1
+                            continue
 
-                    # Upsert pool
-                    stmt = select(LiquidityPool).where(LiquidityPool.pool_id == pool_id)
-                    result = await session.execute(stmt)
-                    pool = result.scalar_one_or_none()
+                        # Resolve assets
+                        asset_a = await self._resolve_pool_asset(session, reserves[0].get("asset", "native"))
+                        asset_b = await self._resolve_pool_asset(session, reserves[1].get("asset", "native"))
 
-                    reserve_a = float(reserves[0].get("amount", 0))
-                    reserve_b = float(reserves[1].get("amount", 0))
-                    total_shares = float(record.get("total_shares", 0))
-                    fee_bp = int(record.get("fee_bp", 30))
+                        if not asset_a or not asset_b:
+                            pools_skipped += 1
+                            continue
 
-                    if pool:
-                        pool.reserve_a = reserve_a
-                        pool.reserve_b = reserve_b
-                        pool.total_shares = total_shares
-                        pool.total_trustlines = int(record.get("total_trustlines", 0))
-                        pool.last_updated_at = datetime.now(timezone.utc)
-                        updated += 1
-                    else:
-                        pool = LiquidityPool(
-                            pool_id=pool_id,
-                            asset_a_id=asset_a.id,
-                            asset_b_id=asset_b.id,
-                            reserve_a=reserve_a,
-                            reserve_b=reserve_b,
-                            total_shares=total_shares,
-                            fee_bp=fee_bp,
-                            total_trustlines=int(record.get("total_trustlines", 0)),
-                        )
-                        session.add(pool)
-                        created += 1
+                        # Upsert pool
+                        stmt = select(LiquidityPool).where(LiquidityPool.pool_id == pool_id)
+                        result = await session.execute(stmt)
+                        pool = result.scalar_one_or_none()
+
+                        reserve_a = float(reserves[0].get("amount", 0))
+                        reserve_b = float(reserves[1].get("amount", 0))
+                        total_shares = float(record.get("total_shares", 0))
+                        fee_bp = int(record.get("fee_bp", 30))
+
+                        if pool:
+                            pool.reserve_a = reserve_a
+                            pool.reserve_b = reserve_b
+                            pool.total_shares = total_shares
+                            pool.total_trustlines = int(record.get("total_trustlines", 0))
+                            pool.last_updated_at = datetime.now(timezone.utc)
+                            updated += 1
+                        else:
+                            pool = LiquidityPool(
+                                pool_id=pool_id,
+                                asset_a_id=asset_a.id,
+                                asset_b_id=asset_b.id,
+                                reserve_a=reserve_a,
+                                reserve_b=reserve_b,
+                                total_shares=total_shares,
+                                fee_bp=fee_bp,
+                                total_trustlines=int(record.get("total_trustlines", 0)),
+                            )
+                            session.add(pool)
+                            created += 1
+
+                    await session.commit()
+                    
+                total_created += created
+                total_updated += updated
+                self.total_pools_seen += len(records)
+                self.total_pools_persisted += (created + updated)
+                
+                # Fetch next page
+                call_builder = server.liquidity_pools().cursor(self._cursor).limit(200)
+
+            self.last_sync_time = datetime.now(timezone.utc)
 
             # Notify graph engine of pool updates
-            redis = get_redis()
-            await redis.publish(RedisKeys.CHANNEL_POOL_UPDATE, f"synced:{len(records)}")
+            if total_created > 0 or total_updated > 0:
+                redis = get_redis()
+                await redis.publish(RedisKeys.CHANNEL_POOL_UPDATE, f"synced:{pools_discovered}")
 
-            logger.info("pool_sync_complete", total=len(records), created=created, updated=updated)
+            logger.info("pool_sync_complete", 
+                pages=pages_processed,
+                discovered=pools_discovered,
+                created=total_created, 
+                updated=total_updated,
+                skipped=pools_skipped,
+                cursor=self._cursor
+            )
 
         except Exception as e:
             logger.error("pool_fetch_error", error=str(e))
