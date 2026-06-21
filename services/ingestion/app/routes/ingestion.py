@@ -97,7 +97,7 @@ async def get_orderbooks_stats(request: Request) -> dict:
 @router.get("/connectivity")
 async def get_connectivity(request: Request) -> dict:
     from meridian_shared.db import get_session, Asset, LiquidityPool, OrderbookSnapshot
-    from sqlalchemy import select, func
+    from sqlalchemy import select, func, distinct, tuple_
     from app.streams.manager import StreamManager
     import urllib.request
     import json
@@ -119,12 +119,17 @@ async def get_connectivity(request: Request) -> dict:
     async with get_session() as session:
         assets = await session.scalar(select(func.count()).select_from(Asset))
         pools = await session.scalar(select(func.count()).select_from(LiquidityPool))
-        orderbooks = await session.scalar(select(func.count()).select_from(OrderbookSnapshot))
+        orderbooks = await session.scalar(
+            select(func.count(distinct(tuple_(
+                OrderbookSnapshot.base_asset_id,
+                OrderbookSnapshot.counter_asset_id,
+            ))))
+        ) or 0
 
     return {
         "assets": assets or 0,
         "pools": pools or 0,
-        "orderbooks": orderbooks or 0,
+        "orderbooks": orderbooks,
         "isolated_assets": audit_data.get("isolated_assets", 0),
         "largest_component": data.get("total_nodes", 0) if data.get("connected_components", 0) == 1 else "run graph analysis", # approx
         "graph_density": data.get("density", 0.0),

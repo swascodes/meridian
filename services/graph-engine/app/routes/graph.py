@@ -211,6 +211,9 @@ async def get_health(request: Request) -> dict:
 @router.get("/audit")
 async def get_audit(request: Request) -> dict:
     """Audit graph connectivity and construction state."""
+    from sqlalchemy import select, func, distinct, tuple_
+    from meridian_shared.db import get_session, OrderbookSnapshot
+
     manager = request.app.state.graph_manager
     graph = manager.builder.graph
     
@@ -221,14 +224,23 @@ async def get_audit(request: Request) -> dict:
     orderbook_edges = sum(1 for _, _, d in graph.edges(data=True) if d.get("edge_type") == "orderbook")
     
     isolated_assets = sum(1 for n, d in graph.nodes(data=True) if d.get("node_type") == "asset" and graph.degree(n) == 0)
-    
+
+    # Query unique orderbook pairs from database
+    async with get_session() as session:
+        unique_orderbook_pairs = await session.scalar(
+            select(func.count(distinct(tuple_(
+                OrderbookSnapshot.base_asset_id,
+                OrderbookSnapshot.counter_asset_id,
+            ))))
+        ) or 0
+
     return {
         "assets": asset_count,
         "pools": pool_count,
-        "orderbooks": 0, # not stored as nodes
+        "orderbooks": unique_orderbook_pairs,
         "pool_edges_expected": pool_count * 4,
         "pool_edges_created": pool_edges,
-        "orderbook_edges_expected": 0,
+        "orderbook_edges_expected": unique_orderbook_pairs * 2,
         "orderbook_edges_created": orderbook_edges,
         "isolated_assets": isolated_assets,
     }
