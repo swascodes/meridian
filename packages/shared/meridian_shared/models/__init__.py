@@ -93,6 +93,16 @@ class RouteHop(BaseModel):
     hop_type: str = "orderbook"  # orderbook | amm
 
 
+class RouteExplanation(BaseModel):
+    """Detailed breakdown explaining route scoring and simulation."""
+    base_fee_estimate: float
+    liquidity_penalty: float
+    hop_penalty: float
+    slippage_impact: float
+    bottleneck_hop_index: int | None = None
+    bottleneck_liquidity: float | None = None
+
+
 class RouteResult(BaseModel):
     """Optimized route result."""
     route_hash: str
@@ -100,12 +110,46 @@ class RouteResult(BaseModel):
     destination_asset: AssetIdentifier
     path: list[RouteHop]
     hop_count: int
+    expected_output: float
     estimated_rate: float
     estimated_slippage: float
+    estimated_fee: float
     total_liquidity: float
     quality_score: float | None = None
+    confidence_score: float | None = None
+    explanation: RouteExplanation | None = None
     discovered_at: datetime
     metadata: dict | None = None
+
+
+class RouteDiscoverRequest(BaseModel):
+    """Request to discover optimal routes between assets."""
+    source_asset: AssetIdentifier
+    destination_asset: AssetIdentifier
+    amount: float = Field(..., gt=0)
+    max_hops: int = Field(default=4, ge=1, le=6)
+    max_routes: int = Field(default=5, ge=1, le=20)
+
+
+class RouteDiscoverResponse(BaseModel):
+    """Response containing Top-K discovered routes."""
+    routes: list[RouteResult]
+    latency_ms: int
+    cache_hit: bool
+    evaluated_paths_count: int
+
+
+class RouteExecutionTelemetry(BaseModel):
+    """Telemetry data for executed routes to optimize future pathfinding."""
+    route_hash: str
+    executed_at: datetime
+    input_amount: float
+    expected_output: float
+    actual_output: float
+    slippage_realized: float
+    execution_latency_ms: int
+    success: bool
+    error_reason: str | None = None
 
 
 class RouteSimulationRequest(BaseModel):

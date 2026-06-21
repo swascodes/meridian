@@ -43,8 +43,10 @@ def create_app() -> FastAPI:
 
     from app.routes.health import router as health_router
     from app.routes.graph import router as graph_router
+    from app.routes.discover import router as discover_router
 
     app.include_router(health_router)
     app.include_router(graph_router, prefix="/v1/graph")
+    app.include_router(discover_router, prefix="/v1/routes")
 
     return app

@@ -155,3 +155,55 @@ async def get_pools(request: Request, limit: int = 100, skip: int = 0) -> dict:
         "count": len(pools),
         "pools": pools[skip : skip + limit],
     }
+
+
+@router.get("/components")
+async def get_components(request: Request) -> dict:
+    """Get graph connected components diagnostics."""
+    manager = request.app.state.graph_manager
+    graph = manager.builder.graph
+    
+    import networkx as nx
+    
+    components = list(nx.weakly_connected_components(graph))
+    component_sizes = [len(c) for c in components]
+    component_sizes.sort(reverse=True)
+    
+    return {
+        "total_components": len(components),
+        "largest_component_size": component_sizes[0] if component_sizes else 0,
+        "isolated_nodes": len([c for c in components if len(c) == 1]),
+        "sizes": component_sizes[:10],  # Top 10 sizes
+    }
+
+
+@router.get("/connectivity")
+async def get_connectivity(request: Request) -> dict:
+    """Get graph connectivity diagnostics."""
+    manager = request.app.state.graph_manager
+    graph = manager.builder.graph
+    
+    import networkx as nx
+    
+    num_nodes = graph.number_of_nodes()
+    
+    return {
+        "nodes": num_nodes,
+        "edges": graph.number_of_edges(),
+        "density": nx.density(graph),
+        "avg_degree": sum(d for _, d in graph.degree()) / num_nodes if num_nodes > 0 else 0,
+    }
+
+
+@router.get("/health")
+async def get_health(request: Request) -> dict:
+    """Get graph engine health and caching diagnostics."""
+    manager = request.app.state.graph_manager
+    graph = manager.builder.graph
+    
+    return {
+        "status": "healthy" if graph.number_of_nodes() > 0 else "initializing",
+        "nodes": graph.number_of_nodes(),
+        "cache_rebuild_interval": manager._rebuild_interval,
+        "last_rebuild_attempt": datetime.now(timezone.utc), # simplified
+    }

@@ -78,6 +78,11 @@ class GraphManager:
                 RedisKeys.GRAPH_METADATA,
                 f'{{"nodes":{self.builder.graph.number_of_nodes()},"edges":{self.builder.graph.number_of_edges()},"updated_at":"{datetime.now(timezone.utc).isoformat()}"}}',
             )
+            
+            # Invalidate all route caches
+            from app.pathfinding.cache import RouteCache
+            await RouteCache.invalidate_all()
+            
             logger.debug("graph_cached", size_bytes=len(graph_bytes))
         except Exception as e:
             logger.error("graph_cache_save_failed", error=str(e))
