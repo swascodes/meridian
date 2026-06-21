@@ -122,7 +122,7 @@ class GraphManager:
                 update_count += 1
 
                 # Batch updates: rebuild after N events
-                if update_count >= 50:
+                if update_count >= 5:
                     await self.rebuild()
                     update_count = 0
 

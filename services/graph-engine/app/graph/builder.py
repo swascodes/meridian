@@ -23,11 +23,13 @@ class GraphBuilder:
     async def build_full_graph(self) -> nx.DiGraph:
         """Build complete graph from current database state."""
         logger.info("graph_build_starting")
-        self.graph = nx.DiGraph()
+        new_graph = nx.DiGraph()
 
-        await self._add_asset_nodes()
-        await self._add_orderbook_edges()
-        await self._add_pool_edges()
+        await self._add_asset_nodes(new_graph)
+        await self._add_orderbook_edges(new_graph)
+        await self._add_pool_edges(new_graph)
+
+        self.graph = new_graph
 
         logger.info(
             "graph_build_complete",
@@ -36,31 +38,33 @@ class GraphBuilder:
         )
         return self.graph
 
-    async def _add_asset_nodes(self) -> None:
+    async def _add_asset_nodes(self, graph: nx.DiGraph) -> None:
         """Add all known assets as graph nodes."""
         async with get_session() as session:
             stmt = select(Asset)
             result = await session.execute(stmt)
             assets = result.scalars().all()
 
+            node_count = 0
             for asset in assets:
                 node_id = self._asset_node_id(asset.code, asset.issuer)
-                self.graph.add_node(
+                graph.add_node(
                     node_id,
+                    node_type="asset",
                     asset_id=str(asset.id),
                     code=asset.code,
                     issuer=asset.issuer,
-                    asset_type=asset.asset_type,
                     domain=asset.domain,
-                    is_verified=asset.is_verified,
                     trustlines=asset.total_trustlines,
                     volume_24h=asset.total_volume_24h,
+                    is_verified=asset.is_verified,
                 )
+                node_count += 1
 
-        logger.debug("graph_nodes_added", count=self.graph.number_of_nodes())
+        logger.debug("graph_nodes_added", count=node_count)
 
-    async def _add_orderbook_edges(self) -> None:
-        """Add edges from most recent orderbook snapshots."""
+    async def _add_orderbook_edges(self, graph: nx.DiGraph) -> None:
+        """Add edges from active orderbook snapshots."""
         async with get_session() as session:
             # Get latest snapshot per pair using a subquery
             subq = (
@@ -90,13 +94,13 @@ class GraphBuilder:
                 base_node = self._asset_node_id(snap.base_asset.code, snap.base_asset.issuer)
                 counter_node = self._asset_node_id(snap.counter_asset.code, snap.counter_asset.issuer)
 
-                if base_node not in self.graph or counter_node not in self.graph:
+                if base_node not in graph or counter_node not in graph:
                     continue
 
                 # Bidirectional edges
                 weight = self._calculate_orderbook_weight(snap)
 
-                self.graph.add_edge(
+                graph.add_edge(
                     base_node,
                     counter_node,
                     weight=weight,
@@ -108,7 +112,7 @@ class GraphBuilder:
                     timestamp=snap.timestamp.isoformat(),
                 )
 
-                self.graph.add_edge(
+                graph.add_edge(
                     counter_node,
                     base_node,
                     weight=weight,
@@ -123,7 +127,7 @@ class GraphBuilder:
 
         logger.debug("orderbook_edges_added", count=edge_count)
 
-    async def _add_pool_edges(self) -> None:
+    async def _add_pool_edges(self, graph: nx.DiGraph) -> None:
         """Add edges from AMM liquidity pools."""
         async with get_session() as session:
             stmt = select(LiquidityPool)
@@ -135,43 +139,40 @@ class GraphBuilder:
                 node_a = self._asset_node_id(pool.asset_a.code, pool.asset_a.issuer)
                 node_b = self._asset_node_id(pool.asset_b.code, pool.asset_b.issuer)
 
-                if node_a not in self.graph or node_b not in self.graph:
+                if node_a not in graph or node_b not in graph:
                     continue
 
-                weight = self._calculate_pool_weight(pool)
+                pool_node_id = f"pool:{pool.pool_id}"
+                graph.add_node(
+                    pool_node_id,
+                    node_type="pool",
+                    pool_id=pool.pool_id,
+                    reserve_a=float(pool.reserve_a),
+                    reserve_b=float(pool.reserve_b),
+                    total_shares=float(pool.total_shares),
+                    fee_bp=pool.fee_bp,
+                    timestamp=pool.last_updated_at.isoformat(),
+                )
+
+                weight = self._calculate_pool_weight(pool) / 2.0
 
                 edge_attrs = {
                     "weight": weight,
-                    "edge_type": "amm",
+                    "edge_type": "pool_hop",
                     "pool_id": pool.pool_id,
-                    "reserve_a": float(pool.reserve_a),
-                    "reserve_b": float(pool.reserve_b),
-                    "total_shares": float(pool.total_shares),
                     "fee_bp": pool.fee_bp,
                     "timestamp": pool.last_updated_at.isoformat(),
                 }
 
-                # Add or update edges (prefer lower weight)
-                if self.graph.has_edge(node_a, node_b):
-                    existing = self.graph[node_a][node_b]["weight"]
-                    if weight < existing:
-                        self.graph[node_a][node_b].update(edge_attrs)
-                else:
-                    self.graph.add_edge(node_a, node_b, **edge_attrs)
+                # Asset A -> Pool -> Asset B
+                graph.add_edge(node_a, pool_node_id, **edge_attrs, reserve_in=float(pool.reserve_a), reserve_out=float(pool.reserve_b))
+                graph.add_edge(pool_node_id, node_b, **edge_attrs, reserve_in=float(pool.reserve_a), reserve_out=float(pool.reserve_b))
 
-                # Reverse direction
-                reverse_attrs = {**edge_attrs}
-                reverse_attrs["reserve_a"] = float(pool.reserve_b)
-                reverse_attrs["reserve_b"] = float(pool.reserve_a)
+                # Asset B -> Pool -> Asset A
+                graph.add_edge(node_b, pool_node_id, **edge_attrs, reserve_in=float(pool.reserve_b), reserve_out=float(pool.reserve_a))
+                graph.add_edge(pool_node_id, node_a, **edge_attrs, reserve_in=float(pool.reserve_b), reserve_out=float(pool.reserve_a))
 
-                if self.graph.has_edge(node_b, node_a):
-                    existing = self.graph[node_b][node_a]["weight"]
-                    if weight < existing:
-                        self.graph[node_b][node_a].update(reverse_attrs)
-                else:
-                    self.graph.add_edge(node_b, node_a, **reverse_attrs)
-
-                edge_count += 2
+                edge_count += 4
 
         logger.debug("pool_edges_added", count=edge_count)
 
@@ -199,7 +200,7 @@ class GraphBuilder:
     def _asset_node_id(code: str, issuer: str | None) -> str:
         """Generate deterministic node ID for an asset."""
         raw = f"{code}:{issuer or 'native'}"
-        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+        return "asset:" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def find_paths(
         self,
@@ -225,10 +226,14 @@ class GraphBuilder:
 
     def get_stats(self) -> dict:
         """Get graph topology statistics."""
-        undirected = self.graph.to_undirected()
+        asset_count = sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "asset")
+        pool_count = sum(1 for _, d in self.graph.nodes(data=True) if d.get("node_type") == "pool")
+        
         return {
             "total_nodes": self.graph.number_of_nodes(),
             "total_edges": self.graph.number_of_edges(),
+            "total_assets": asset_count,
+            "total_pools": pool_count,
             "avg_degree": sum(d for _, d in self.graph.degree()) / max(self.graph.number_of_nodes(), 1),
             "density": nx.density(self.graph),
             "connected_components": nx.number_weakly_connected_components(self.graph),

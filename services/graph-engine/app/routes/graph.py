@@ -20,8 +20,8 @@ async def graph_stats(request: Request) -> GraphStats:
     return GraphStats(
         total_nodes=stats["total_nodes"],
         total_edges=stats["total_edges"],
-        total_assets=stats["total_nodes"],
-        total_pools=0,
+        total_assets=stats["total_assets"],
+        total_pools=stats["total_pools"],
         avg_degree=stats["avg_degree"],
         density=stats["density"],
         connected_components=stats["connected_components"],
@@ -101,3 +101,57 @@ async def rebuild_graph(request: Request) -> dict:
     await manager.rebuild()
     stats = manager.get_stats()
     return {"status": "rebuilt", "stats": stats}
+
+
+@router.get("/assets")
+async def get_assets(request: Request, limit: int = 100, skip: int = 0) -> dict:
+    """Get discovered assets in the graph."""
+    manager = request.app.state.graph_manager
+    graph = manager.builder.graph
+    
+    assets = []
+    for node, data in graph.nodes(data=True):
+        if data.get("node_type") == "asset":
+            assets.append({
+                "node_id": node,
+                "code": data.get("code"),
+                "issuer": data.get("issuer"),
+                "domain": data.get("domain"),
+                "trustlines": data.get("trustlines", 0),
+                "volume_24h": data.get("volume_24h", 0.0),
+            })
+            
+    # Sort by trustlines descending
+    assets.sort(key=lambda x: x["trustlines"], reverse=True)
+    
+    return {
+        "count": len(assets),
+        "assets": assets[skip : skip + limit],
+    }
+
+
+@router.get("/pools")
+async def get_pools(request: Request, limit: int = 100, skip: int = 0) -> dict:
+    """Get discovered liquidity pools in the graph."""
+    manager = request.app.state.graph_manager
+    graph = manager.builder.graph
+    
+    pools = []
+    for node, data in graph.nodes(data=True):
+        if data.get("node_type") == "pool":
+            pools.append({
+                "node_id": node,
+                "pool_id": data.get("pool_id"),
+                "reserve_a": data.get("reserve_a", 0.0),
+                "reserve_b": data.get("reserve_b", 0.0),
+                "total_shares": data.get("total_shares", 0.0),
+                "fee_bp": data.get("fee_bp", 30),
+            })
+            
+    # Sort by liquidity proxy (total_shares) descending
+    pools.sort(key=lambda x: x["total_shares"], reverse=True)
+    
+    return {
+        "count": len(pools),
+        "pools": pools[skip : skip + limit],
+    }

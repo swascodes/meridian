@@ -68,7 +68,7 @@ SELECT add_retention_policy('orderbook_snapshots', INTERVAL '30 days', if_not_ex
 
 CREATE TABLE IF NOT EXISTS trades (
     id UUID DEFAULT uuid_generate_v4(),
-    stellar_trade_id VARCHAR(64) UNIQUE NOT NULL,
+    stellar_trade_id TEXT NOT NULL,
     base_asset_id UUID NOT NULL REFERENCES assets(id),
     counter_asset_id UUID NOT NULL REFERENCES assets(id),
     base_amount NUMERIC(20, 7) NOT NULL,
@@ -77,9 +77,10 @@ CREATE TABLE IF NOT EXISTS trades (
     base_is_seller BOOLEAN NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
     ledger_close_time TIMESTAMPTZ NOT NULL,
-    trade_type VARCHAR(20) NOT NULL,
-    liquidity_pool_id VARCHAR(64),
-    PRIMARY KEY (id, timestamp)
+    trade_type TEXT NOT NULL,
+    liquidity_pool_id TEXT,
+    PRIMARY KEY (id, timestamp),
+    UNIQUE (stellar_trade_id, timestamp)
 );
 
 SELECT create_hypertable('trades', 'timestamp', if_not_exists => TRUE);

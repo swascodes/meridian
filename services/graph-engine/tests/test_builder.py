@@ -10,6 +10,7 @@ def test_asset_node_id_deterministic():
     id1 = GraphBuilder._asset_node_id("XLM", None)
     id2 = GraphBuilder._asset_node_id("XLM", None)
     assert id1 == id2
+    assert id1.startswith("asset:")
 
 
 def test_asset_node_id_different_for_different_assets():
