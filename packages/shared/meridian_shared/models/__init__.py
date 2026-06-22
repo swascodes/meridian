@@ -26,10 +26,7 @@ from meridian_shared.models.routes import (  # noqa: F401
 # ─── Enums ───
 
 
-class AssetType(str, Enum):
-    NATIVE = "native"
-    CREDIT_ALPHANUM4 = "credit_alphanum4"
-    CREDIT_ALPHANUM12 = "credit_alphanum12"
+from meridian_shared.models.assets import AssetType, AssetIdentifier, AssetDetail
 
 
 class RouteStatus(str, Enum):
@@ -48,31 +45,6 @@ class ExecutionStatus(str, Enum):
 class TradeType(str, Enum):
     ORDERBOOK = "orderbook"
     LIQUIDITY_POOL = "liquidity_pool"
-
-
-# ─── Asset Models ───
-
-
-class AssetIdentifier(BaseModel):
-    """Lightweight asset reference."""
-    code: str = Field(..., max_length=12)
-    issuer: str | None = Field(None, max_length=56)
-
-    @property
-    def canonical(self) -> str:
-        return f"{self.code}:{self.issuer}" if self.issuer else "native"
-
-
-class AssetDetail(AssetIdentifier):
-    """Full asset information."""
-    id: UUID
-    asset_type: AssetType
-    domain: str | None = None
-    is_verified: bool = False
-    total_trustlines: int = 0
-    total_volume_24h: float = 0.0
-    first_seen_at: datetime
-    last_seen_at: datetime
 
 
 # ─── Orderbook Models ───
@@ -151,6 +123,7 @@ class RouteDiscoverRequest(BaseModel):
     simulate: bool = Field(default=False)
     risk_analysis: bool = Field(default=False)
     validate_execution: bool = Field(default=False)
+    mode: str = Field(default="simulation")  # "live" | "simulation" | "testnet"
 
 
 class RouteDiscoverResponse(BaseModel):
@@ -159,6 +132,7 @@ class RouteDiscoverResponse(BaseModel):
     latency_ms: int
     cache_hit: bool
     evaluated_paths_count: int
+    failure_reason: str | None = None
 
 
 class RouteExecutionTelemetry(BaseModel):
@@ -277,3 +251,6 @@ class ServiceHealth(BaseModel):
     version: str = "0.1.0"
     timestamp: datetime
     dependencies: dict[str, str] = Field(default_factory=dict)
+
+
+

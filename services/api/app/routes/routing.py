@@ -87,17 +87,17 @@ async def route_metrics() -> dict:
     return await _proxy_get("/metrics")
 
 
-@router.get("/investigate")
-async def investigate_route(
+@router.get("/debug")
+async def debug_route(
     source_code: str,
     dest_code: str,
     source_issuer: str | None = None,
     dest_issuer: str | None = None,
 ) -> dict:
-    """Investigate route resolution. Proxied to graph-engine."""
+    """Debug route resolution. Proxied to graph-engine."""
     params = {"source_code": source_code, "dest_code": dest_code}
     if source_issuer:
         params["source_issuer"] = source_issuer
     if dest_issuer:
         params["dest_issuer"] = dest_issuer
-    return await _proxy_get("/investigate", params)
+    return await _proxy_get("/debug", params)

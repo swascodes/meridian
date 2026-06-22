@@ -21,6 +21,14 @@ class RouteSimulationEngine:
         Returns:
             Tuple of (expected_output, estimated_slippage, estimated_fee, explanation, success)
         """
+        if not path or len(path) < 2:
+            return 0.0, 1.0, 0.0, RouteExplanation(
+                base_fee_estimate=0.0,
+                liquidity_penalty=1.0,
+                hop_penalty=0.0,
+                slippage_impact=1.0
+            ), False
+
         current_amount = input_amount
         total_fee_base = 0.0
         

@@ -29,6 +29,15 @@ class RouteValidator:
         checks: dict[str, bool] = {}
         reasons: list[str] = []
         liquidity_sufficient = True
+        
+        if not path or len(path) < 2:
+            return ExecutionValidation(
+                valid=False,
+                reason="Invalid path length (< 2 nodes)",
+                checked_at=now,
+                liquidity_sufficient=False,
+                checks={"path_length_valid": False},
+            )
 
         i = 0
         while i < len(path) - 1:

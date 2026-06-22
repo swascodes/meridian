@@ -110,6 +110,10 @@ async def get_assets(request: Request, limit: int = 100, skip: int = 0, q: str |
     manager = request.app.state.graph_manager
     graph = manager.builder.graph
     
+    if graph.number_of_nodes() == 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Graph engine is still initializing")
+    
     # Pre-calculate components if graph is populated
     components = list(nx.weakly_connected_components(graph)) if graph.number_of_nodes() > 0 else []
     node_to_comp_size = {}

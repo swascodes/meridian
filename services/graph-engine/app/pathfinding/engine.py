@@ -6,6 +6,7 @@ import hashlib
 import time
 from datetime import datetime, timezone
 
+import logging
 import networkx as nx
 
 from meridian_shared.models import (
@@ -24,6 +25,8 @@ from app.execution.validator import RouteValidator
 from app.pathfinding.scoring import RouteScoringEngine
 from app.pathfinding.simulation import RouteSimulationEngine
 from app.pathfinding.strategies import DijkstraStrategy, YensStrategy
+
+logger = logging.getLogger("graph-engine")
 
 
 class PathfindingEngine:
@@ -59,10 +62,18 @@ class PathfindingEngine:
         source_id = self._node_id(request.source_asset.code, request.source_asset.issuer)
         dest_id = self._node_id(request.destination_asset.code, request.destination_asset.issuer)
 
+        if source_id == dest_id:
+            return RouteDiscoverResponse(
+                routes=[], latency_ms=self._elapsed(start_time),
+                cache_hit=False, evaluated_paths_count=0,
+                failure_reason="Source and destination assets are identical"
+            )
+
         if source_id not in self.graph or dest_id not in self.graph:
             return RouteDiscoverResponse(
                 routes=[], latency_ms=self._elapsed(start_time),
-                cache_hit=False, evaluated_paths_count=0
+                cache_hit=False, evaluated_paths_count=0,
+                failure_reason="Source or destination asset not found in graph"
             )
 
         # 2. Prune Graph
@@ -70,7 +81,8 @@ class PathfindingEngine:
         if source_id not in pruned_graph or dest_id not in pruned_graph:
             return RouteDiscoverResponse(
                 routes=[], latency_ms=self._elapsed(start_time),
-                cache_hit=False, evaluated_paths_count=0
+                cache_hit=False, evaluated_paths_count=0,
+                failure_reason="Source or destination asset isolated after liquidity pruning"
             )
 
         # 3. Discover Paths (Yen's K-Shortest)
@@ -88,6 +100,12 @@ class PathfindingEngine:
 
         # 4. Simulate, Score, and Enrich
         for path in raw_paths:
+            if not path or len(path) < 2:
+                logger.warning(f"Skipping invalid path: length={len(path)}, path={path}")
+                continue
+                
+            logger.info(f"Scoring path: source={request.source_asset.code}, dest={request.destination_asset.code}, length={len(path)}, raw={path}")
+
             # Basic simulation (existing engine)
             expected_output, slippage, fee_base, explanation, success = (
                 RouteSimulationEngine.simulate_path(self.graph, path, request.amount)
@@ -175,6 +193,15 @@ class PathfindingEngine:
         # 5. Sort by execution_score DESC
         routes.sort(key=lambda r: r.execution_score or 0.0, reverse=True)
         routes = routes[:request.max_routes]
+
+        if not routes:
+            return RouteDiscoverResponse(
+                routes=[],
+                latency_ms=self._elapsed(start_time),
+                cache_hit=False,
+                evaluated_paths_count=len(raw_paths),
+                failure_reason="No valid path found"
+            )
 
         return RouteDiscoverResponse(
             routes=routes,

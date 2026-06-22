@@ -20,6 +20,16 @@ class ExecutionSimulator:
         amount: float,
     ) -> ExecutionSimulation:
         """Run full execution simulation returning per-hop breakdown."""
+        if not path or len(path) < 2:
+            return ExecutionSimulation(
+                expected_output=0.0,
+                total_fee=0.0,
+                slippage=1.0,
+                price_impact=1.0,
+                hop_details=[],
+                simulated_at=datetime.now(timezone.utc),
+            )
+
         current_amount = amount
         total_fee = 0.0
         hop_details: list[ExecutionHopDetail] = []

@@ -25,6 +25,7 @@ export function AssetSelector({ label, value, onChange, placeholder = "Search as
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,23 +42,46 @@ export function AssetSelector({ label, value, onChange, placeholder = "Search as
   useEffect(() => {
     if (!isOpen) return;
 
-    const fetchAssets = async () => {
-      setLoading(true);
+    let isCancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const fetchAssets = async (retryCount = 0) => {
+      if (!isCancelled) setLoading(true);
+      if (retryCount > 0 && !isCancelled) setRetrying(true);
+
       try {
         const res = await fetch(`${API_BASE}/v1/graph/assets?limit=50${query ? `&q=${encodeURIComponent(query)}` : ""}`);
+        if (isCancelled) return;
+
         if (res.ok) {
           const data = await res.json();
           setAssets(data.assets || []);
+          setRetrying(false);
+          setLoading(false);
+        } else if (res.status === 502 || res.status === 503) {
+          // Graph initializing, retry with exponential backoff
+          const delay = Math.min(1000 * Math.pow(1.5, retryCount), 10000);
+          timeoutId = setTimeout(() => fetchAssets(retryCount + 1), delay);
+        } else {
+          setAssets([]);
+          setRetrying(false);
+          setLoading(false);
         }
       } catch (err) {
+        if (isCancelled) return;
         console.error("Failed to fetch assets", err);
-      } finally {
-        setLoading(false);
+        // Retry on network errors
+        const delay = Math.min(1000 * Math.pow(1.5, retryCount), 10000);
+        timeoutId = setTimeout(() => fetchAssets(retryCount + 1), delay);
       }
     };
 
-    const debounceTimer = setTimeout(fetchAssets, 300);
-    return () => clearTimeout(debounceTimer);
+    timeoutId = setTimeout(() => fetchAssets(0), 300);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [query, isOpen]);
 
   const displayValue = value ? `${value.code}${value.issuer ? ` (${value.issuer.slice(0,4)}...${value.issuer.slice(-4)})` : ""}` : "";
@@ -90,7 +114,9 @@ export function AssetSelector({ label, value, onChange, placeholder = "Search as
 
       {isOpen && (
         <div className="absolute z-50 w-full mt-1 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-lg shadow-xl max-h-60 overflow-y-auto">
-          {loading && assets.length === 0 ? (
+          {retrying && assets.length === 0 ? (
+            <div className="p-3 text-xs text-center text-[var(--color-warning)] animate-pulse">Graph initializing... (Retrying)</div>
+          ) : loading && assets.length === 0 ? (
             <div className="p-3 text-xs text-center text-[var(--color-text-muted)]">Loading assets...</div>
           ) : assets.length === 0 ? (
             <div className="p-3 text-xs text-center text-[var(--color-text-muted)]">No active assets found</div>

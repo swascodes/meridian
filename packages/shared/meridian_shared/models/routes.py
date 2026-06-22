@@ -84,10 +84,12 @@ class ExecutionPlan(BaseModel):
     generated_at: datetime
 
 
+from meridian_shared.models.assets import AssetIdentifier
+
 class RouteValidateRequest(BaseModel):
     """Request to validate a route."""
-    source_asset: "AssetIdentifier"  # noqa: F821
-    destination_asset: "AssetIdentifier"  # noqa: F821
+    source_asset: AssetIdentifier
+    destination_asset: AssetIdentifier
     amount: float = Field(..., gt=0)
     max_hops: int = Field(default=4, ge=1, le=6)
 

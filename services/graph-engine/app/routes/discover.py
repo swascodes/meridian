@@ -58,7 +58,14 @@ async def discover_routes(request: Request, payload: RouteDiscoverRequest) -> Ro
 
     # 3. Pathfinding Engine
     engine = PathfindingEngine(graph)
-    response = engine.discover_routes(payload)
+    try:
+        response = engine.discover_routes(payload)
+    except Exception as e:
+        import traceback
+        import logging
+        logger = logging.getLogger("graph-engine")
+        logger.error(f"Internal routing error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal routing engine error: {str(e)}")
 
     # 4. Track metrics
     _metrics["routes_discovered_total"] += len(response.routes)
@@ -190,8 +197,8 @@ async def cache_stats() -> CacheStats:
     )
 
 
-@router.get("/investigate")
-async def investigate_route(
+@router.get("/debug")
+async def debug_route(
     request: Request,
     source_code: str,
     dest_code: str,
@@ -225,6 +232,7 @@ async def investigate_route(
 
     path_exists = False
     candidate_paths_found = 0
+    shortest_path_length = 0
     failure_reason = None
 
     if not source_exists:
@@ -243,6 +251,7 @@ async def investigate_route(
             # Check candidate paths up to 4 hops
             try:
                 paths = list(nx.shortest_simple_paths(graph, source_id, dest_id, weight="weight"))
+                shortest_path_length = len(paths[0]) if paths else 0
                 valid_paths = [p for p in paths if len(p) <= 5]  # 4 hops = 5 nodes
                 candidate_paths_found = len(valid_paths)
                 if candidate_paths_found == 0:
@@ -262,6 +271,7 @@ async def investigate_route(
         "destination_degree": dest_degree,
         "same_component": same_component,
         "path_exists": path_exists,
+        "shortest_path_length": shortest_path_length,
         "component_size": component_size,
         "candidate_paths_found": candidate_paths_found,
         "failure_reason": failure_reason,

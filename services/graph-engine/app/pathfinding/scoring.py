@@ -36,6 +36,9 @@ class RouteScoringEngine:
         # 1.0 is a perfect route.
         # Penalized by slippage, fees, and hop count.
         
+        if not path or len(path) < 2:
+            return 0.0, 0.0
+        
         # Calculate execution efficiency
         efficiency = expected_output / ideal_output if ideal_output > 0 else 0.0
         efficiency = max(0.0, min(1.0, efficiency))
