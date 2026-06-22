@@ -1,7 +1,7 @@
 {
   "source_asset": {"code": "XLM"},
-  "destination_asset": {"code": "TEST", "issuer": "GBLOQVMUBR6DD7HEYZGLJRO6CBQSJ3HTQ6GE25BWCZKNZ6AGBICG5MR4"},
-  "amount": 0.0001,
+  "destination_asset": {"code": "0AAA", "issuer": "GBYW6PSFN57DULOENQDDVTTUWN245MDPEHGWCYXKCCBWZXXAZZAKUQJS"},
+  "amount": 100,
   "simulate": true,
   "risk_analysis": true,
   "validate_execution": true

@@ -45,3 +45,11 @@ async def graph_audit() -> dict:
 async def graph_metrics() -> dict:
     """Get graph observability metrics."""
     return await _proxy_get("/metrics")
+
+@router.get("/assets")
+async def graph_assets(limit: int = 100, skip: int = 0, q: str | None = None) -> dict:
+    """Get discovered assets in the graph. Proxied to graph-engine."""
+    params = {"limit": limit, "skip": skip}
+    if q:
+        params["q"] = q
+    return await _proxy_get("/assets", params)

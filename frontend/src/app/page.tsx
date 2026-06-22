@@ -69,7 +69,7 @@ export default function Home() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 pb-20 space-y-8">
         <section id="routes">
-          <RouteExplorer />
+          <RouteExplorer walletAddress={walletAddress} />
         </section>
 
         <section id="network">

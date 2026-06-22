@@ -190,15 +190,15 @@ async def cache_stats() -> CacheStats:
     )
 
 
-@router.get("/debug")
-async def debug_route(
+@router.get("/investigate")
+async def investigate_route(
     request: Request,
     source_code: str,
     dest_code: str,
     source_issuer: str | None = None,
     dest_issuer: str | None = None,
 ) -> dict:
-    """Debug why a route is failing."""
+    """Investigate why a route is failing."""
     manager = request.app.state.graph_manager
     graph = manager.builder.graph
 
@@ -215,30 +215,56 @@ async def debug_route(
     source_degree = graph.degree(source_id) if source_exists else 0
     dest_degree = graph.degree(dest_id) if dest_exists else 0
 
-    reachable = len(nx.descendants(graph, source_id)) if source_exists else 0
-    components = nx.number_weakly_connected_components(graph) if graph.number_of_nodes() > 0 else 0
+    components = list(nx.weakly_connected_components(graph)) if graph.number_of_nodes() > 0 else []
+    
+    source_comp = next((c for c in components if source_id in c), set())
+    dest_comp = next((c for c in components if dest_id in c), set())
+
+    same_component = bool(source_comp) and (source_comp == dest_comp)
+    component_size = len(source_comp) if source_exists else 0
 
     path_exists = False
-    if source_exists and dest_exists:
-        path_exists = nx.has_path(graph, source_id, dest_id)
+    candidate_paths_found = 0
+    failure_reason = None
 
-    mismatch = []
     if not source_exists:
-        mismatch.append(f"Source missing: {source_id}")
-    if not dest_exists:
-        mismatch.append(f"Destination missing: {dest_id}")
+        failure_reason = "source asset not found"
+    elif not dest_exists:
+        failure_reason = "destination asset not found"
+    elif source_degree == 0:
+        failure_reason = "isolated source node"
+    elif dest_degree == 0:
+        failure_reason = "isolated destination node"
+    elif not same_component:
+        failure_reason = "different connected components"
+    else:
+        path_exists = nx.has_path(graph, source_id, dest_id)
+        if path_exists:
+            # Check candidate paths up to 4 hops
+            try:
+                paths = list(nx.shortest_simple_paths(graph, source_id, dest_id, weight="weight"))
+                valid_paths = [p for p in paths if len(p) <= 5]  # 4 hops = 5 nodes
+                candidate_paths_found = len(valid_paths)
+                if candidate_paths_found == 0:
+                    failure_reason = "path exceeds max hops"
+                else:
+                    failure_reason = "path pruned by liquidity filter or simulation rejection"
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                path_exists = False
+                failure_reason = "no valid simple path found"
+        else:
+            failure_reason = "no path exists in graph"
 
     return {
-        "source_id_generated": source_id,
-        "dest_id_generated": dest_id,
         "source_exists": source_exists,
         "destination_exists": dest_exists,
         "source_degree": source_degree,
         "destination_degree": dest_degree,
-        "connected_components": components,
-        "reachable_nodes": reachable,
+        "same_component": same_component,
         "path_exists": path_exists,
-        "mismatch": mismatch,
+        "component_size": component_size,
+        "candidate_paths_found": candidate_paths_found,
+        "failure_reason": failure_reason,
     }
 
 

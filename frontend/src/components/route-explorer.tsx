@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { Horizon } from "@stellar/stellar-sdk";
+import { AssetSelector } from "./asset-selector";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const server = new Horizon.Server("https://horizon.stellar.org");
 
 interface RouteHop {
   asset: { code: string; issuer: string | null };
@@ -65,26 +68,99 @@ interface RouteResult {
   explanation: RouteExplanation | null;
 }
 
-export function RouteExplorer() {
-  const [sourceAssetCode, setSourceAssetCode] = useState("XLM");
-  const [destAssetCode, setDestAssetCode] = useState("USDC");
-  const [destAssetIssuer, setDestAssetIssuer] = useState("");
+interface Diagnostics {
+  source_exists: boolean;
+  destination_exists: boolean;
+  source_degree: number;
+  destination_degree: number;
+  same_component: boolean;
+  path_exists: boolean;
+  component_size: number;
+  candidate_paths_found: number;
+  failure_reason: string | null;
+}
+
+interface RouteExplorerProps {
+  walletAddress?: string | null;
+}
+
+export function RouteExplorer({ walletAddress }: RouteExplorerProps) {
+  const [sourceAsset, setSourceAsset] = useState<{code: string, issuer: string | null}>({ code: "XLM", issuer: null });
+  const [destAsset, setDestAsset] = useState<{code: string, issuer: string | null} | null>(null);
   const [amount, setAmount] = useState("100");
+  
   const [routes, setRoutes] = useState<RouteResult[]>([]);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
 
+  // Wallet balances state
+  const [balances, setBalances] = useState<Record<string, number>>({});
+  const [trustlines, setTrustlines] = useState<Set<string>>(new Set());
+  const [fetchingBalances, setFetchingBalances] = useState(false);
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setBalances({});
+      setTrustlines(new Set());
+      return;
+    }
+
+    const fetchAccount = async () => {
+      setFetchingBalances(true);
+      try {
+        const account = await server.loadAccount(walletAddress);
+        const newBalances: Record<string, number> = {};
+        const newTrustlines = new Set<string>();
+
+        account.balances.forEach((b: any) => {
+          if (b.asset_type === "native") {
+            newBalances["XLM:native"] = parseFloat(b.balance);
+            newTrustlines.add("XLM:native");
+          } else {
+            const key = `${b.asset_code}:${b.asset_issuer}`;
+            newBalances[key] = parseFloat(b.balance);
+            newTrustlines.add(key);
+          }
+        });
+
+        setBalances(newBalances);
+        setTrustlines(newTrustlines);
+      } catch (err) {
+        console.error("Failed to fetch wallet balances", err);
+      } finally {
+        setFetchingBalances(false);
+      }
+    };
+
+    fetchAccount();
+  }, [walletAddress]);
+
+  const getAssetKey = (asset: {code: string, issuer: string | null} | null) => {
+    if (!asset) return "";
+    return asset.issuer ? `${asset.code}:${asset.issuer}` : "XLM:native";
+  };
+
+  const sourceKey = getAssetKey(sourceAsset);
+  const destKey = getAssetKey(destAsset);
+  
+  const sourceBalance = balances[sourceKey] || 0;
+  const hasDestTrustline = destKey === "XLM:native" || trustlines.has(destKey);
+  const isBalanceInsufficient = parseFloat(amount || "0") > sourceBalance;
+
   const findRoutes = async () => {
-    if (!destAssetCode.trim()) return;
+    if (!destAsset || !sourceAsset) return;
 
     setLoading(true);
     setError(null);
     setExpandedRoute(null);
+    setDiagnostics(null);
 
     const payload = {
-      source_asset: { code: sourceAssetCode, issuer: null },
-      destination_asset: { code: destAssetCode, issuer: destAssetIssuer || null },
+      source_asset: sourceAsset,
+      destination_asset: destAsset,
       amount: parseFloat(amount),
       simulate: true,
       risk_analysis: true,
@@ -102,7 +178,19 @@ export function RouteExplorer() {
         throw new Error(`API returned ${res.status}: ${text}`);
       }
       const data = await res.json();
-      setRoutes(data.routes || []);
+      
+      const foundRoutes = data.routes || [];
+      setRoutes(foundRoutes);
+
+      if (foundRoutes.length === 0) {
+        // Trigger investigation
+        const diagRes = await fetch(`${API_BASE}/v1/routes/investigate?source_code=${sourceAsset.code}${sourceAsset.issuer ? `&source_issuer=${sourceAsset.issuer}` : ''}&dest_code=${destAsset.code}${destAsset.issuer ? `&dest_issuer=${destAsset.issuer}` : ''}`);
+        if (diagRes.ok) {
+          const diagData = await diagRes.json();
+          setDiagnostics(diagData);
+        }
+      }
+
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to fetch routes";
       setError(message);
@@ -126,6 +214,24 @@ export function RouteExplorer() {
     }
   };
 
+  // Validation state logic
+  let btnDisabled = true;
+  let validationMessage = "";
+
+  if (!walletAddress) {
+    validationMessage = "Connect wallet to discover executable routes.";
+  } else if (!destAsset) {
+    validationMessage = "Select a destination asset.";
+  } else if (!amount || parseFloat(amount) <= 0) {
+    validationMessage = "Enter a valid amount.";
+  } else if (isBalanceInsufficient) {
+    validationMessage = "Insufficient source balance.";
+  } else if (!hasDestTrustline) {
+    validationMessage = "Missing destination trustline.";
+  } else {
+    btnDisabled = false;
+  }
+
   return (
     <div className="glass-card p-6">
       <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
@@ -136,38 +242,34 @@ export function RouteExplorer() {
       </h2>
 
       {/* Search Form */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Source Asset Code</label>
-          <input
-            type="text"
-            value={sourceAssetCode}
-            onChange={(e) => setSourceAssetCode(e.target.value)}
-            placeholder="XLM"
-            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
+        <div className="md:col-span-1">
+          <AssetSelector 
+            label="Source Asset" 
+            value={sourceAsset} 
+            onChange={setSourceAsset} 
           />
+          {walletAddress && sourceAsset && (
+            <div className="text-[10px] text-[var(--color-text-muted)] mt-1 ml-1">
+              Balance: {fetchingBalances ? "..." : sourceBalance.toLocaleString()}
+            </div>
+          )}
         </div>
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Dest Asset Code</label>
-          <input
-            type="text"
-            value={destAssetCode}
-            onChange={(e) => setDestAssetCode(e.target.value)}
-            placeholder="USDC"
-            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+        
+        <div className="md:col-span-1">
+          <AssetSelector 
+            label="Destination Asset" 
+            value={destAsset} 
+            onChange={setDestAsset} 
           />
+          {walletAddress && destAsset && (
+            <div className="text-[10px] text-[var(--color-text-muted)] mt-1 ml-1">
+              Trustline: {hasDestTrustline ? <span className="text-[var(--color-success)]">Active</span> : <span className="text-[var(--color-error)]">Missing</span>}
+            </div>
+          )}
         </div>
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Dest Issuer (Optional)</label>
-          <input
-            type="text"
-            value={destAssetIssuer}
-            onChange={(e) => setDestAssetIssuer(e.target.value)}
-            placeholder="G..."
-            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors font-mono"
-          />
-        </div>
-        <div>
+        
+        <div className="md:col-span-1">
           <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Amount</label>
           <input
             type="number"
@@ -177,16 +279,23 @@ export function RouteExplorer() {
             className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
           />
         </div>
-        <div className="flex items-end">
+        <div className="md:col-span-1 flex items-end">
           <button
             onClick={findRoutes}
-            disabled={loading || !destAssetCode.trim() || !amount}
-            className="w-full px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={loading || btnDisabled}
+            className="w-full px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed h-[38px] flex items-center justify-center"
           >
             {loading ? "Discovering..." : "Find Best Route"}
           </button>
         </div>
       </div>
+
+      {/* Validation Warning */}
+      {validationMessage && (
+        <div className={`mb-6 text-xs px-2 ${btnDisabled && walletAddress ? 'text-[var(--color-warning)]' : 'text-[var(--color-text-muted)]'}`}>
+          {validationMessage}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -195,9 +304,40 @@ export function RouteExplorer() {
         </div>
       )}
 
+      {/* Diagnostics Panel */}
+      {diagnostics && routes.length === 0 && !loading && (
+        <div className="mt-6 border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-[var(--color-error)] mb-3 flex items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Route Discovery Failed
+          </h3>
+          <p className="text-sm text-[var(--color-text-secondary)] mb-4 font-medium uppercase tracking-wider">
+            Reason: <span className="text-[var(--color-text-primary)]">{diagnostics.failure_reason}</span>
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+            <div className="p-2 rounded bg-[var(--color-bg-elevated)]">
+              <div className="text-[var(--color-text-muted)] mb-1">Source Degree</div>
+              <div className="font-mono">{diagnostics.source_degree}</div>
+            </div>
+            <div className="p-2 rounded bg-[var(--color-bg-elevated)]">
+              <div className="text-[var(--color-text-muted)] mb-1">Dest Degree</div>
+              <div className="font-mono">{diagnostics.destination_degree}</div>
+            </div>
+            <div className="p-2 rounded bg-[var(--color-bg-elevated)]">
+              <div className="text-[var(--color-text-muted)] mb-1">Component Match</div>
+              <div className="font-mono">{diagnostics.same_component ? "Yes" : "No"}</div>
+            </div>
+            <div className="p-2 rounded bg-[var(--color-bg-elevated)]">
+              <div className="text-[var(--color-text-muted)] mb-1">Paths Evaluated</div>
+              <div className="font-mono">{diagnostics.candidate_paths_found}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Results */}
       {routes.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-3 mt-4">
           <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-4">
             {routes.length} execution plan{routes.length !== 1 ? "s" : ""} generated
           </h3>
@@ -370,7 +510,7 @@ export function RouteExplorer() {
       )}
 
       {/* Empty state */}
-      {routes.length === 0 && !loading && !error && (
+      {routes.length === 0 && !loading && !error && !diagnostics && (
         <div className="text-center py-12 text-[var(--color-text-muted)]">
           <svg className="mx-auto mb-3 w-12 h-12 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8"/>

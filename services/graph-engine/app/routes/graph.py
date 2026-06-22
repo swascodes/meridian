@@ -104,25 +104,47 @@ async def rebuild_graph(request: Request) -> dict:
 
 
 @router.get("/assets")
-async def get_assets(request: Request, limit: int = 100, skip: int = 0) -> dict:
+async def get_assets(request: Request, limit: int = 100, skip: int = 0, q: str | None = None) -> dict:
     """Get discovered assets in the graph."""
+    import networkx as nx
     manager = request.app.state.graph_manager
     graph = manager.builder.graph
     
+    # Pre-calculate components if graph is populated
+    components = list(nx.weakly_connected_components(graph)) if graph.number_of_nodes() > 0 else []
+    node_to_comp_size = {}
+    for comp in components:
+        size = len(comp)
+        for node in comp:
+            node_to_comp_size[node] = size
+
     assets = []
     for node, data in graph.nodes(data=True):
         if data.get("node_type") == "asset":
-            assets.append({
-                "node_id": node,
-                "code": data.get("code"),
-                "issuer": data.get("issuer"),
-                "domain": data.get("domain"),
-                "trustlines": data.get("trustlines", 0),
-                "volume_24h": data.get("volume_24h", 0.0),
-            })
+            degree = graph.degree(node)
+            comp_size = node_to_comp_size.get(node, 1)
             
-    # Sort by trustlines descending
-    assets.sort(key=lambda x: x["trustlines"], reverse=True)
+            # Filter criteria: degree > 0 and component_size > 1
+            if degree > 0 and comp_size > 1:
+                code = data.get("code", "")
+                
+                # Search query filter
+                if q and q.lower() not in code.lower():
+                    continue
+
+                assets.append({
+                    "node_id": node,
+                    "code": code,
+                    "issuer": data.get("issuer"),
+                    "domain": data.get("domain"),
+                    "trustlines": data.get("trustlines", 0),
+                    "volume_24h": data.get("volume_24h", 0.0),
+                    "degree": degree,
+                    "component_size": comp_size,
+                })
+            
+    # Sort by degree and trustlines descending
+    assets.sort(key=lambda x: (x["degree"], x["trustlines"]), reverse=True)
     
     return {
         "count": len(assets),
