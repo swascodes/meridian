@@ -1,4 +1,4 @@
-"""Graph proxy endpoints."""
+"""Graph proxy endpoints — all graph-engine calls proxied through gateway."""
 
 from __future__ import annotations
 
@@ -6,19 +6,42 @@ from fastapi import APIRouter, HTTPException
 import httpx
 
 from meridian_shared.config import get_settings
-from meridian_shared.models import GraphStats
 
 router = APIRouter()
 
+TIMEOUT = 15.0
 
-@router.get("/stats", response_model=GraphStats)
-async def graph_stats() -> GraphStats:
-    """Get graph topology statistics."""
+
+async def _proxy_get(path: str, params: dict | None = None) -> dict:
+    """GET proxy to graph-engine."""
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{settings.graph_engine_url}/v1/graph/stats")
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(
+                f"{settings.graph_engine_url}/v1/graph{path}",
+                params=params,
+            )
             resp.raise_for_status()
-            return GraphStats(**resp.json())
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Graph engine unavailable: {e}")
+
+
+@router.get("/stats")
+async def graph_stats() -> dict:
+    """Get graph topology statistics."""
+    return await _proxy_get("/stats")
+
+
+@router.get("/audit")
+async def graph_audit() -> dict:
+    """Audit graph connectivity and construction state."""
+    return await _proxy_get("/audit")
+
+
+@router.get("/metrics")
+async def graph_metrics() -> dict:
+    """Get graph observability metrics."""
+    return await _proxy_get("/metrics")

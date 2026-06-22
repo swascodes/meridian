@@ -8,6 +8,20 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from meridian_shared.models.routes import (  # noqa: F401
+    CacheStats,
+    ExecutionHopDetail,
+    ExecutionPlan,
+    ExecutionRisk,
+    ExecutionSimulation,
+    ExecutionStep,
+    ExecutionValidation,
+    RiskFactor,
+    RiskLevel,
+    RouteExplainResponse,
+    RouteValidateRequest,
+)
+
 
 # ─── Enums ───
 
@@ -117,6 +131,11 @@ class RouteResult(BaseModel):
     total_liquidity: float
     quality_score: float | None = None
     confidence_score: float | None = None
+    execution_score: float | None = None
+    risk: ExecutionRisk | None = None
+    validation: ExecutionValidation | None = None
+    simulation: ExecutionSimulation | None = None
+    plan: ExecutionPlan | None = None
     explanation: RouteExplanation | None = None
     discovered_at: datetime
     metadata: dict | None = None
@@ -129,6 +148,9 @@ class RouteDiscoverRequest(BaseModel):
     amount: float = Field(..., gt=0)
     max_hops: int = Field(default=4, ge=1, le=6)
     max_routes: int = Field(default=5, ge=1, le=20)
+    simulate: bool = Field(default=False)
+    risk_analysis: bool = Field(default=False)
+    validate_execution: bool = Field(default=False)
 
 
 class RouteDiscoverResponse(BaseModel):

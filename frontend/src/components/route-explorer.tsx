@@ -9,39 +9,100 @@ interface RouteHop {
   hop_type: string;
 }
 
+interface ExecutionSimulation {
+  expected_output: number;
+  total_fee: number;
+  slippage: number;
+  price_impact: number;
+  hop_details: any[];
+}
+
+interface ExecutionRisk {
+  risk_score: number;
+  risk_level: string;
+  factors: any[];
+}
+
+interface ExecutionValidation {
+  valid: boolean;
+  reason: string | null;
+  liquidity_sufficient: boolean;
+}
+
+interface ExecutionPlan {
+  route_hash: string;
+  steps: any[];
+  total_input: number;
+  expected_total_output: number;
+  estimated_duration_ms: number;
+}
+
+interface RouteExplanation {
+  base_fee_estimate: number;
+  liquidity_penalty: number;
+  hop_penalty: number;
+  slippage_impact: number;
+}
+
 interface RouteResult {
   route_hash: string;
   source_asset: { code: string; issuer: string | null };
   destination_asset: { code: string; issuer: string | null };
   path: RouteHop[];
   hop_count: number;
+  expected_output: number;
   estimated_rate: number;
   estimated_slippage: number;
+  estimated_fee: number;
   total_liquidity: number;
   quality_score: number | null;
+  confidence_score: number | null;
+  execution_score: number | null;
+  risk: ExecutionRisk | null;
+  validation: ExecutionValidation | null;
+  simulation: ExecutionSimulation | null;
+  plan: ExecutionPlan | null;
+  explanation: RouteExplanation | null;
 }
 
 export function RouteExplorer() {
-  const [sourceAsset, setSourceAsset] = useState("native");
-  const [destAsset, setDestAsset] = useState("");
+  const [sourceAssetCode, setSourceAssetCode] = useState("XLM");
+  const [destAssetCode, setDestAssetCode] = useState("USDC");
+  const [destAssetIssuer, setDestAssetIssuer] = useState("");
   const [amount, setAmount] = useState("100");
   const [routes, setRoutes] = useState<RouteResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedRoute, setExpandedRoute] = useState<string | null>(null);
 
   const findRoutes = async () => {
-    if (!destAsset.trim()) return;
+    if (!destAssetCode.trim()) return;
 
     setLoading(true);
     setError(null);
+    setExpandedRoute(null);
+
+    const payload = {
+      source_asset: { code: sourceAssetCode, issuer: null },
+      destination_asset: { code: destAssetCode, issuer: destAssetIssuer || null },
+      amount: parseFloat(amount),
+      simulate: true,
+      risk_analysis: true,
+      validate_execution: true,
+    };
 
     try {
-      const res = await fetch(
-        `${API_BASE}/v1/routes/${encodeURIComponent(sourceAsset)}/${encodeURIComponent(destAsset)}?amount=${amount}`
-      );
-      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      const res = await fetch(`${API_BASE}/v1/routes/discover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`API returned ${res.status}: ${text}`);
+      }
       const data = await res.json();
-      setRoutes(data);
+      setRoutes(data.routes || []);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Failed to fetch routes";
       setError(message);
@@ -51,35 +112,59 @@ export function RouteExplorer() {
     }
   };
 
+  const toggleExpand = (hash: string) => {
+    setExpandedRoute(expandedRoute === hash ? null : hash);
+  };
+
+  const getRiskColor = (level?: string) => {
+    switch (level) {
+      case "LOW": return "text-[var(--color-success)]";
+      case "MEDIUM": return "text-[var(--color-warning)]";
+      case "HIGH":
+      case "CRITICAL": return "text-[var(--color-error)]";
+      default: return "text-[var(--color-text-muted)]";
+    }
+  };
+
   return (
     <div className="glass-card p-6">
       <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
         </svg>
-        Route Explorer
+        Smart Order Router
       </h2>
 
       {/* Search Form */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Source Asset</label>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Source Asset Code</label>
           <input
             type="text"
-            value={sourceAsset}
-            onChange={(e) => setSourceAsset(e.target.value)}
-            placeholder="native or CODE:ISSUER"
+            value={sourceAssetCode}
+            onChange={(e) => setSourceAssetCode(e.target.value)}
+            placeholder="XLM"
             className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
           />
         </div>
         <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Destination Asset</label>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Dest Asset Code</label>
           <input
             type="text"
-            value={destAsset}
-            onChange={(e) => setDestAsset(e.target.value)}
-            placeholder="CODE:ISSUER"
+            value={destAssetCode}
+            onChange={(e) => setDestAssetCode(e.target.value)}
+            placeholder="USDC"
             className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1.5">Dest Issuer (Optional)</label>
+          <input
+            type="text"
+            value={destAssetIssuer}
+            onChange={(e) => setDestAssetIssuer(e.target.value)}
+            placeholder="G..."
+            className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] text-sm focus:outline-none focus:border-[var(--color-accent)] transition-colors font-mono"
           />
         </div>
         <div>
@@ -95,10 +180,10 @@ export function RouteExplorer() {
         <div className="flex items-end">
           <button
             onClick={findRoutes}
-            disabled={loading || !destAsset.trim()}
+            disabled={loading || !destAssetCode.trim() || !amount}
             className="w-full px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {loading ? "Finding..." : "Find Routes"}
+            {loading ? "Discovering..." : "Find Best Route"}
           </button>
         </div>
       </div>
@@ -113,58 +198,174 @@ export function RouteExplorer() {
       {/* Results */}
       {routes.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
-            {routes.length} route{routes.length !== 1 ? "s" : ""} found
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-4">
+            {routes.length} execution plan{routes.length !== 1 ? "s" : ""} generated
           </h3>
-          {routes.map((route, i) => (
-            <div
-              key={route.route_hash}
-              className="p-4 rounded-lg bg-[var(--color-bg-elevated)] border border-[var(--color-border)] hover:border-[var(--color-border-hover)] transition-colors"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
-                    #{i + 1}
-                  </span>
-                  <span className="text-sm font-mono text-[var(--color-text-muted)]">
-                    {route.route_hash.slice(0, 12)}...
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 text-sm">
-                  <span className="text-[var(--color-text-muted)]">
-                    {route.hop_count} hop{route.hop_count !== 1 ? "s" : ""}
-                  </span>
-                  {route.quality_score !== null && (
-                    <span className={`font-medium ${route.quality_score > 0.8 ? "text-[var(--color-success)]" : route.quality_score > 0.5 ? "text-[var(--color-warning)]" : "text-[var(--color-error)]"}`}>
-                      {(route.quality_score * 100).toFixed(1)}% quality
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Path visualization */}
-              <div className="flex items-center gap-1 flex-wrap">
-                {route.path.map((hop, j) => (
-                  <div key={j} className="flex items-center gap-1">
-                    <span className="text-sm font-medium px-2 py-1 rounded bg-[var(--color-bg-card)] border border-[var(--color-border)]">
-                      {hop.asset.code}
-                    </span>
-                    {j < route.path.length - 1 && (
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 12h14M12 5l7 7-7 7"/>
-                      </svg>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+                <tr>
+                  <th className="pb-3 px-2 font-medium">Rank</th>
+                  <th className="pb-3 px-2 font-medium">Path</th>
+                  <th className="pb-3 px-2 font-medium">Expected Output</th>
+                  <th className="pb-3 px-2 font-medium">Slippage</th>
+                  <th className="pb-3 px-2 font-medium">Fees</th>
+                  <th className="pb-3 px-2 font-medium">Risk</th>
+                  <th className="pb-3 px-2 font-medium">Exec Score</th>
+                  <th className="pb-3 px-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]/50">
+                {routes.map((route, i) => (
+                  <React.Fragment key={route.route_hash}>
+                    <tr className="hover:bg-[var(--color-bg-elevated)]/50 transition-colors group cursor-pointer" onClick={() => toggleExpand(route.route_hash)}>
+                      <td className="py-3 px-2">
+                        <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)] text-xs font-semibold">
+                          {i + 1}
+                        </span>
+                      </td>
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {route.path.map((hop, j) => (
+                            <div key={j} className="flex items-center gap-1">
+                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${hop.hop_type === "amm" ? "bg-[var(--color-success)]/10 text-[var(--color-success)]" : "bg-[var(--color-bg-card)] border border-[var(--color-border)]"}`}>
+                                {hop.asset.code}
+                              </span>
+                              {j < route.path.length - 1 && (
+                                <span className="text-[var(--color-text-muted)] text-xs">→</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 font-medium">
+                        {route.expected_output.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                      </td>
+                      <td className="py-3 px-2 text-[var(--color-text-secondary)]">
+                        {(route.estimated_slippage * 100).toFixed(2)}%
+                      </td>
+                      <td className="py-3 px-2 text-[var(--color-text-secondary)]">
+                        {route.estimated_fee.toFixed(4)}
+                      </td>
+                      <td className="py-3 px-2">
+                        <div className="flex flex-col">
+                          <span className={`text-xs font-semibold ${getRiskColor(route.risk?.risk_level)}`}>
+                            {route.risk?.risk_level || "UNKNOWN"}
+                          </span>
+                          <span className="text-[10px] text-[var(--color-text-muted)]">
+                            Score: {(route.risk?.risk_score ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-2">
+                        <span className="text-sm font-semibold text-[var(--color-accent)]">
+                          {((route.execution_score ?? 0) * 100).toFixed(1)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-2 text-right">
+                        <svg 
+                          className={`w-4 h-4 text-[var(--color-text-muted)] transform transition-transform ${expandedRoute === route.route_hash ? "rotate-180" : ""}`} 
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </td>
+                    </tr>
+                    
+                    {/* Expanded Details */}
+                    {expandedRoute === route.route_hash && (
+                      <tr className="bg-[var(--color-bg-elevated)]/30">
+                        <td colSpan={8} className="p-4 border-b border-[var(--color-border)]">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            
+                            {/* Validation & Explanation */}
+                            <div className="space-y-4">
+                              <div>
+                                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Validation</h4>
+                                <div className="p-3 rounded bg-[var(--color-bg-card)] border border-[var(--color-border)]">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <div className={`w-2 h-2 rounded-full ${route.validation?.valid ? 'bg-[var(--color-success)]' : 'bg-[var(--color-error)]'}`}></div>
+                                    <span className="text-sm font-medium">{route.validation?.valid ? "Execution Ready" : "Validation Failed"}</span>
+                                  </div>
+                                  {!route.validation?.valid && (
+                                    <p className="text-xs text-[var(--color-error)]">{route.validation?.reason}</p>
+                                  )}
+                                  <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                                    Liquidity Sufficient: {route.validation?.liquidity_sufficient ? "Yes" : "No"}
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div>
+                                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Simulation Impact</h4>
+                                <div className="p-3 rounded bg-[var(--color-bg-card)] border border-[var(--color-border)] text-xs space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-[var(--color-text-muted)]">Price Impact</span>
+                                    <span>{(route.simulation?.price_impact ?? 0 * 100).toFixed(2)}%</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-[var(--color-text-muted)]">Bottleneck Liquidity</span>
+                                    <span>{route.total_liquidity.toLocaleString()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-[var(--color-text-muted)]">Confidence</span>
+                                    <span>{((route.confidence_score ?? 0) * 100).toFixed(1)}%</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Execution Plan */}
+                            <div>
+                              <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Execution Plan</h4>
+                              <div className="space-y-2">
+                                {route.plan?.steps.map((step, idx) => (
+                                  <div key={idx} className="p-3 rounded bg-[var(--color-bg-card)] border border-[var(--color-border)]">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-xs font-medium px-2 py-0.5 rounded bg-[var(--color-bg-elevated)]">
+                                        Step {step.step_index + 1}
+                                      </span>
+                                      <span className="text-[10px] uppercase text-[var(--color-text-muted)] tracking-wider">
+                                        {step.type.replace('_', ' ')}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="flex items-center justify-between text-sm">
+                                      <div className="flex flex-col">
+                                        <span className="font-medium text-[var(--color-error)]">-{step.expected_input.toFixed(4)}</span>
+                                        <span className="text-xs text-[var(--color-text-muted)]">{step.input_asset.split(':')[0]}</span>
+                                      </div>
+                                      
+                                      <svg className="w-4 h-4 text-[var(--color-text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                                      </svg>
+                                      
+                                      <div className="flex flex-col items-end">
+                                        <span className="font-medium text-[var(--color-success)]">+{step.expected_output.toFixed(4)}</span>
+                                        <span className="text-xs text-[var(--color-text-muted)]">{step.output_asset.split(':')[0]}</span>
+                                      </div>
+                                    </div>
+                                    
+                                    {step.pool_id && (
+                                      <div className="mt-2 text-[10px] text-[var(--color-text-muted)] text-right font-mono">
+                                        Pool: {step.pool_id.slice(0, 8)}...{step.pool_id.slice(-8)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </div>
+                  </React.Fragment>
                 ))}
-              </div>
-
-              <div className="mt-3 flex gap-6 text-xs text-[var(--color-text-muted)]">
-                <span>Rate: {route.estimated_rate.toFixed(6)}</span>
-                <span>Slippage: {(route.estimated_slippage * 100).toFixed(2)}%</span>
-                <span>Liquidity: {route.total_liquidity.toLocaleString()}</span>
-              </div>
-            </div>
-          ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -175,7 +376,7 @@ export function RouteExplorer() {
             <circle cx="11" cy="11" r="8"/>
             <path d="m21 21-4.3-4.3"/>
           </svg>
-          <p className="text-sm">Enter a destination asset to discover optimal routes</p>
+          <p className="text-sm">Configure assets and amount to generate execution plans</p>
         </div>
       )}
     </div>

@@ -24,7 +24,7 @@ export default function Home() {
             </div>
             <span className="text-lg font-semibold tracking-tight">Meridian</span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-accent)]/10 text-[var(--color-accent)] font-medium">
-              Phase 1
+              Phase 4
             </span>
           </div>
 
@@ -51,15 +51,14 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-6 pt-20 pb-16">
         <div className="max-w-2xl">
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-tight">
-            Route Intelligence
+            Execution Intelligence
             <br />
             <span className="bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-success)] bg-clip-text text-transparent">
               for Stellar
             </span>
           </h1>
           <p className="mt-4 text-lg text-[var(--color-text-secondary)] leading-relaxed max-w-lg">
-            Find the highest-quality paths for value transfer. Powered by real-time
-            liquidity analysis, historical execution data, and predictive routing.
+            Smart Order Routing powered by real-time simulation, multi-factor risk assessment, and deterministic execution planning.
           </p>
         </div>
       </section>
